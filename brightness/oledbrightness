@@ -1,0 +1,14 @@
+#!/bin/bash
+path=/sys/class/backlight/intel_backlight
+
+read -r max < "$path"/max_brightness
+read -r level < "$path"/actual_brightness
+
+luminance=`echo "scale=1;$level/$max" | bc`
+xrandr --output eDP1 --brightness "${luminance}"
+
+while inotifywait -e modify --format '' "${path}/actual_brightness"; do
+    read -r level < "$path"/actual_brightness
+    luminance=`echo "scale=1;$level/$max" | bc`
+    xrandr --output eDP1 --brightness "${luminance}"
+done
