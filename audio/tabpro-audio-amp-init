@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+shopt -s nullglob
+
+readonly replay=/usr/local/libexec/tabpro-hda-coef-replay
+readonly trace=/usr/local/share/tabpro-audio/alc298-smw700-amp.tsv
+
+validate_hardware() {
+    local pci_device
+    local audio_controller_found=false
+
+    for attribute in \
+        /sys/class/dmi/id/sys_vendor \
+        /sys/class/dmi/id/product_name; do
+        if [[ ! -r $attribute ]]; then
+            echo "Cannot validate hardware: ${attribute} is unavailable." >&2
+            return 1
+        fi
+    done
+
+    if [[ $(< /sys/class/dmi/id/sys_vendor) != \
+            "SAMSUNG ELECTRONICS CO., LTD." ]] ||
+       [[ $(< /sys/class/dmi/id/product_name) != "Galaxy TabPro S" ]]; then
+        echo "Refusing to run: DMI does not identify a Galaxy TabPro S." >&2
+        return 1
+    fi
+
+    for pci_device in /sys/bus/pci/devices/*; do
+        if [[ -r $pci_device/vendor &&
+              -r $pci_device/device &&
+              -r $pci_device/subsystem_vendor &&
+              -r $pci_device/subsystem_device ]] &&
+           [[ $(< "$pci_device/vendor") == "0x8086" ]] &&
+           [[ $(< "$pci_device/device") == "0x9d70" ]] &&
+           [[ $(< "$pci_device/subsystem_vendor") == "0x144d" ]] &&
+           [[ $(< "$pci_device/subsystem_device") == "0xc135" ]]; then
+            audio_controller_found=true
+            break
+        fi
+    done
+
+    if [[ $audio_controller_found != true ]]; then
+        echo "Refusing to run: validated audio controller 8086:9d70 " \
+             "with subsystem 144d:c135 was not found." >&2
+        return 1
+    fi
+}
+
+validate_hardware
+
+if [[ ${1:-} == "--check-hardware" ]]; then
+    echo "Validated Samsung Galaxy TabPro S audio hardware."
+    exit 0
+elif (($# != 0)); then
+    echo "Usage: $0 [--check-hardware]" >&2
+    exit 2
+fi
+
+codec=
+for ((attempt = 0; attempt < 150; attempt++)); do
+    for codec_info in /proc/asound/card*/codec#*; do
+        if grep -q '^Vendor Id: 0x10ec0298$' "$codec_info" &&
+           grep -q '^Subsystem Id: 0x144dc135$' "$codec_info"; then
+            card=${codec_info#/proc/asound/card}
+            card=${card%%/*}
+            codec_device=${codec_info##*codec#}
+            candidate=/dev/snd/hwC${card}D${codec_device}
+            if [[ -c $candidate ]]; then
+                codec=$candidate
+                break 2
+            fi
+        fi
+    done
+    sleep 0.1
+done
+
+if [[ -z $codec ]]; then
+    echo "The validated ALC298 codec did not become available." >&2
+    exit 1
+fi
+
+echo "Applying the Samsung amplifier sequence to ${codec}."
+exec "$replay" "$codec" "$trace"
