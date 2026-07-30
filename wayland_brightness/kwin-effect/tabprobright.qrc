@@ -1,0 +1,6 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/effects/tabprobright/shaders">
+        <file alias="brightness.frag">shaders/brightness.frag</file>
+    </qresource>
+</RCC>
