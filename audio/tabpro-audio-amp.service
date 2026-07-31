@@ -1,0 +1,11 @@
+[Unit]
+Description=Initialize Galaxy TabPro S speaker amplifiers
+After=sound.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/tabpro-audio-amp-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
