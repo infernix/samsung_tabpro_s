@@ -1,0 +1,185 @@
+diff --git a/src/ipa/ipu3/algorithms/af.cpp b/src/ipa/ipu3/algorithms/af.cpp
+index cf68fb5..2d453c4 100644
+--- a/src/ipa/ipu3/algorithms/af.cpp
++++ b/src/ipa/ipu3/algorithms/af.cpp
+@@ -270,7 +270,9 @@ void Af::afReset(IPAContext &context)
+  *
+  * We always pick the largest variance to replace the previous one. The image
+  * with a larger variance also indicates it is a clearer image than previous
+- * one. If we find a negative derivative, we return immediately.
++ * one. Scan the complete configured range instead of stopping at the first
++ * negative derivative, as noisy IPU3 statistics can otherwise select a local
++ * maximum far away from the true focus.
+  *
+  * \return True, if it finds a AF value.
+  */
+@@ -280,36 +282,20 @@ bool Af::afScan(IPAContext &context, int min_step)
+ 		/* If reach the max step, move lens to the position. */
+ 		context.activeState.af.focus = bestFocus_;
+ 		return true;
+-	} else {
+-		/*
+-		 * Find the maximum of the variance by estimating its
+-		 * derivative. If the direction changes, it means we have
+-		 * passed a maximum one step before.
+-		 */
+-		if ((currentVariance_ - context.activeState.af.maxVariance) >=
+-		    -(context.activeState.af.maxVariance * 0.1)) {
+-			/*
+-			 * Positive and zero derivative:
+-			 * The variance is still increasing. The focus could be
+-			 * increased for the next comparison. Also, the max variance
+-			 * and previous focus value are updated.
+-			 */
+-			bestFocus_ = focus_;
+-			focus_ += min_step;
+-			context.activeState.af.focus = focus_;
+-			context.activeState.af.maxVariance = currentVariance_;
+-		} else {
+-			/*
+-			 * Negative derivative:
+-			 * The variance starts to decrease which means the maximum
+-			 * variance is found. Set focus step to previous good one
+-			 * then return immediately.
+-			 */
+-			context.activeState.af.focus = bestFocus_;
+-			return true;
+-		}
+ 	}
+ 
++	if (currentVariance_ > context.activeState.af.maxVariance) {
++		bestFocus_ = focus_;
++		context.activeState.af.maxVariance = currentVariance_;
++	}
++
++	focus_ += min_step;
++	if (focus_ > maxStep_) {
++		context.activeState.af.focus = bestFocus_;
++		return true;
++	}
++
++	context.activeState.af.focus = focus_;
+ 	previousVariance_ = currentVariance_;
+ 	LOG(IPU3Af, Debug) << " Previous step is "
+ 			   << bestFocus_
+diff --git a/src/ipa/ipu3/algorithms/tone_mapping.cpp b/src/ipa/ipu3/algorithms/tone_mapping.cpp
+index 160338c..02061c7 100644
+--- a/src/ipa/ipu3/algorithms/tone_mapping.cpp
++++ b/src/ipa/ipu3/algorithms/tone_mapping.cpp
+@@ -27,10 +27,18 @@ namespace ipa::ipu3::algorithms {
+  */
+ 
+ ToneMapping::ToneMapping()
+-	: gamma_(1.0)
++	: gamma_(1.1)
+ {
+ }
+ 
++int ToneMapping::init([[maybe_unused]] IPAContext &context,
++		      const ValueNode &tuningData)
++{
++	gamma_ = tuningData["gamma"].get<double>().value_or(1.1);
++
++	return 0;
++}
++
+ /**
+  * \brief Configure the tone mapping given a configInfo
+  * \param[in] context The shared IPA context
+@@ -89,13 +97,6 @@ void ToneMapping::process(IPAContext &context, [[maybe_unused]] const uint32_t f
+ 			  [[maybe_unused]] const ipu3_uapi_stats_3a *stats,
+ 			  [[maybe_unused]] ControlList &metadata)
+ {
+-	/*
+-	 * Hardcode gamma to 1.1 as a default for now.
+-	 *
+-	 * \todo Expose gamma control setting through the libcamera control API
+-	 */
+-	gamma_ = 1.1;
+-
+ 	if (context.activeState.toneMapping.gamma == gamma_)
+ 		return;
+ 
+diff --git a/src/ipa/ipu3/algorithms/tone_mapping.h b/src/ipa/ipu3/algorithms/tone_mapping.h
+index b2b3801..a1e1d10 100644
+--- a/src/ipa/ipu3/algorithms/tone_mapping.h
++++ b/src/ipa/ipu3/algorithms/tone_mapping.h
+@@ -18,6 +18,7 @@ class ToneMapping : public Algorithm
+ public:
+ 	ToneMapping();
+ 
++	int init(IPAContext &context, const ValueNode &tuningData) override;
+ 	int configure(IPAContext &context, const IPAConfigInfo &configInfo) override;
+ 	void prepare(IPAContext &context, const uint32_t frame,
+ 		     IPAFrameContext &frameContext, ipu3_uapi_params *params) override;
+diff --git a/src/ipa/ipu3/data/meson.build b/src/ipa/ipu3/data/meson.build
+index 0f7cd5c..a744258 100644
+--- a/src/ipa/ipu3/data/meson.build
++++ b/src/ipa/ipu3/data/meson.build
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: CC0-1.0
+ 
+ conf_files = files([
++    'imx241.yaml',
+     'uncalibrated.yaml',
+ ])
+ 
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 9457d62..36f38a6 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -554,6 +554,22 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx219", CameraSensorHelperImx219)
+ 
++class CameraSensorHelperImx241 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx241()
++	{
++		/*
++		 * The TabPro S kernel driver exposes analogue gain as an
++		 * unsigned 8.8 fixed-point multiplier: 0x0100 is 1x and
++		 * 0x1000 is 16x.
++		 */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 256 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx241", CameraSensorHelperImx241)
++
+ class CameraSensorHelperImx258 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_legacy.cpp b/src/libcamera/sensor/camera_sensor_legacy.cpp
+index 6a68382..f675aed 100644
+--- a/src/libcamera/sensor/camera_sensor_legacy.cpp
++++ b/src/libcamera/sensor/camera_sensor_legacy.cpp
+@@ -128,7 +128,8 @@ private:
+ 	std::vector<unsigned int> mbusCodes_;
+ 	std::vector<Size> sizes_;
+ 	std::vector<controls::draft::TestPatternModeEnum> testPatternModes_;
+-	controls::draft::TestPatternModeEnum testPatternMode_;
++	controls::draft::TestPatternModeEnum testPatternMode_ =
++		controls::draft::TestPatternModeEnum::TestPatternModeOff;
+ 
+ 	Size pixelArraySize_;
+ 	Rectangle activeArea_;
+diff --git a/src/ipa/ipu3/data/imx241.yaml b/src/ipa/ipu3/data/imx241.yaml
+new file mode 100644
+index 0000000..7f272f0
+--- /dev/null
++++ b/src/ipa/ipu3/data/imx241.yaml
+@@ -0,0 +1,12 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - Af:
++  - Agc:
++  - Awb:
++  - BlackLevelCorrection:
++  - ToneMapping:
++      gamma: 1.8
++...
