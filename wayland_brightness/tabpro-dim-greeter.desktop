@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=TabPro S OLED Brightness
+Comment=Mirror intel_backlight to CRTC gamma for Samsung OLED panel
+Exec=/usr/local/bin/tabpro-dim.py
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+OnlyShowIn=GNOME;

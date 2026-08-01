@@ -1,0 +1,16 @@
+{
+    "KPlugin": {
+        "Category": "Accessibility",
+        "Description": "Dims the OLED panel on Samsung TabPro S by mirroring intel_backlight to a screen shader",
+        "Description[en_GB]": "Dims the OLED panel on Samsung TabPro S by mirroring intel_backlight to a screen shader",
+        "EnabledByDefault": true,
+        "Id": "tabprobright",
+        "License": "GPL-2.0-or-later",
+        "Name": "TabPro S OLED Brightness",
+        "Name[en_GB]": "TabPro S OLED Brightness",
+        "ServiceTypes": [
+            "KWin/Effect"
+        ],
+        "Version": "1.0"
+    }
+}

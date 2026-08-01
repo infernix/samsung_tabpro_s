@@ -1,0 +1,18 @@
+[Unit]
+Description=Samsung TabPro S OLED brightness daemon (intel_backlight -> CRTC gamma)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+# Only meaningful in a GNOME/Wayland session (mutter SetCrtcGamma). KWin does
+# not expose SetCrtcGamma; if you switch to KDE, mask this unit and use a KWin
+# effect instead (see README.md).
+ConditionEnvironment=XDG_CURRENT_DESKTOP=GNOME
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/tabpro-dim.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
